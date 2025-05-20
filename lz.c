@@ -4,6 +4,9 @@
 #include <stdlib.h>
 #include <string.h>
 
+#define TUPLE_LIST_CAPACITY 64
+#define OUTPUT_CAPACITY 128
+
 typedef struct {
     uint16_t offset;
     uint8_t length;
@@ -44,7 +47,7 @@ TupleList *lz77_compress(const char *input) {
     TupleList *output = NULL;
 
     size_t input_length = strlen(input);
-    output = tuple_list_new(64);
+    output = tuple_list_new(TUPLE_LIST_CAPACITY);
     if (!output) {
         error = true;
         goto cleanup;
@@ -87,26 +90,43 @@ cleanup:
     return output;
 }
 
+void lz77_decompress(char *output, const TupleList *list) {
+    uint8_t length = 0;
+    for (size_t i = 0; i < list->length; ++i) {
+        const Tuple *tuple = &list->data[i];
+        memcpy(output + length, output + length - tuple->offset, tuple->length);
+        length += tuple->length;
+        output[length++] = tuple->symbol;
+    }
+    output[length] = '\0';
+}
+
 int main(void) {
     int retcode = 0;
-    TupleList *output = NULL;
+    TupleList *tuples = NULL;
 
     const char *input = "abracadabrad";
-    output = lz77_compress(input);
-    if (!output) {
+    tuples = lz77_compress(input);
+    if (!tuples) {
         fprintf(stderr, "error: lz77_compress failed\n");
         retcode = 1;
         goto cleanup;
     }
 
-    for (size_t i = 0; i < output->length; ++i) {
-        const Tuple *tuple = &output->data[i];
+    char output[OUTPUT_CAPACITY];
+    lz77_decompress(output, tuples);
+
+    printf("Input: %s\n", input);
+    printf("Tuples:\n");
+    for (size_t i = 0; i < tuples->length; ++i) {
+        const Tuple *tuple = &tuples->data[i];
         printf("(%d, %d, '%c')\n", tuple->offset, tuple->length, tuple->symbol);
     }
+    printf("Output: %s\n", output);
 
 cleanup:
-    if (output) {
-        tuple_list_free(output);
+    if (tuples) {
+        tuple_list_free(tuples);
     }
     return retcode;
 }
