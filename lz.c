@@ -7,6 +7,23 @@
 #define TUPLE_LIST_CAPACITY 64
 #define OUTPUT_CAPACITY 128
 
+void uint8_be_write(uint8_t *buf, uint8_t value) {
+    buf[0] = value & 0xFF;
+}
+
+void uint16_be_write(uint8_t *buf, uint16_t value) {
+    buf[0] = (value >> 8) & 0xFF;
+    buf[1] = value & 0xFF;
+}
+
+uint8_t uint8_be_read(uint8_t *buf) {
+    return buf[0];
+}
+
+uint16_t uint16_be_read(uint8_t *buf) {
+    return buf[0] << 8 | buf[1];
+}
+
 typedef struct {
     uint16_t offset;
     uint8_t length;
@@ -30,6 +47,10 @@ TupleList *tuple_list_new(size_t capacity) {
     return list;
 }
 
+void tuple_list_free(TupleList *list) {
+    free(list);
+}
+
 int tuple_list_push(TupleList *list, const Tuple *tuple) {
     if (list->length >= list->capacity) {
         return -1;
@@ -38,8 +59,58 @@ int tuple_list_push(TupleList *list, const Tuple *tuple) {
     return 0;
 }
 
-void tuple_list_free(TupleList *list) {
-    free(list);
+int tuple_list_serialize(const TupleList *list, FILE *stream) {
+    for (size_t i = 0; i < list->length; ++i) {
+        const Tuple *tuple = &list->data[i];
+        uint8_t buf[4];
+        uint16_be_write(buf, tuple->offset);
+        uint8_be_write(buf + 2, tuple->length);
+        uint8_be_write(buf + 3, tuple->symbol);
+        size_t written = fwrite(buf, 1, sizeof(buf), stream);
+        if (written != sizeof(buf)) {
+            return -1;
+        }
+    }
+    return 0;
+}
+
+TupleList *tuple_list_deserialize(FILE *stream) {
+    bool error = false;
+    TupleList *list = NULL;
+
+    list = tuple_list_new(TUPLE_LIST_CAPACITY);
+    if (!list) {
+        error = true;
+        goto cleanup;
+    }
+
+    while (true) {
+        uint8_t buf[4];
+        size_t read = fread(buf, 1, sizeof(buf), stream);
+        if (read != sizeof(buf)) {
+            if (feof(stream)) {
+                break;
+            }
+            error = true;
+            goto cleanup;
+        }
+        Tuple tuple = {
+            .offset = uint16_be_read(buf),
+            .length = uint8_be_read(buf + 2),
+            .symbol = uint8_be_read(buf + 3),
+        };
+        if (tuple_list_push(list, &tuple) < 0) {
+            error = true;
+            goto cleanup;
+        }
+    }
+
+cleanup:
+    if (error) {
+        tuple_list_free(list);
+        return NULL;
+    }
+    return list;
 }
 
 TupleList *lz77_compress(const char *input) {
@@ -101,28 +172,38 @@ void lz77_decompress(char *output, const TupleList *list) {
     output[length] = '\0';
 }
 
+typedef enum {
+    MODE_COMPRESS,
+    MODE_DECOMPRESS,
+} Mode;
+
 int main(void) {
     int retcode = 0;
+    Mode mode = MODE_COMPRESS;
     TupleList *tuples = NULL;
 
-    const char *input = "abracadabrad";
-    tuples = lz77_compress(input);
-    if (!tuples) {
-        fprintf(stderr, "error: lz77_compress failed\n");
-        retcode = 1;
-        goto cleanup;
+    switch (mode) {
+    case MODE_COMPRESS: {
+        const char *input = "abracadabrad";
+        tuples = lz77_compress(input);
+        if (!tuples) {
+            fprintf(stderr, "error: lz77_compress failed\n");
+            retcode = 1;
+            goto cleanup;
+        }
+        if (tuple_list_serialize(tuples, stdout) < 0) {
+            fprintf(stderr, "error: tuple_list_serialize failed\n");
+            retcode = 1;
+            goto cleanup;
+        }
+        break;
     }
-
-    char output[OUTPUT_CAPACITY];
-    lz77_decompress(output, tuples);
-
-    printf("Input: %s\n", input);
-    printf("Tuples:\n");
-    for (size_t i = 0; i < tuples->length; ++i) {
-        const Tuple *tuple = &tuples->data[i];
-        printf("(%d, %d, '%c')\n", tuple->offset, tuple->length, tuple->symbol);
+    case MODE_DECOMPRESS: {
+        char output[OUTPUT_CAPACITY];
+        lz77_decompress(output, tuples);
+        break;
     }
-    printf("Output: %s\n", output);
+    }
 
 cleanup:
     if (tuples) {
