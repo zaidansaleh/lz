@@ -25,6 +25,63 @@ uint16_t uint16_be_read(uint8_t *buf) {
 }
 
 typedef struct {
+    size_t capacity;
+    size_t length;
+    char *data;
+} String;
+
+String *string_new() {
+#define STRING_DEFAULT_CAPACITY 8
+    String *s = malloc(sizeof(String));
+    if (!s) {
+        return NULL;
+    }
+    s->capacity = STRING_DEFAULT_CAPACITY;
+    s->length = 0;
+    char *data = malloc(sizeof(char) * STRING_DEFAULT_CAPACITY);
+    if (!data) {
+        return NULL;
+    }
+    data[s->length] = '\0';
+    s->data = data;
+    return s;
+#undef STRING_DEFAULT_CAPACITY
+}
+
+void string_free(String *s) {
+    free(s->data);
+    free(s);
+}
+
+int string_push(String *s, char ch) {
+    // Make sure length + 1 bytes are available (actual length plus null terminator).
+    if (s->length + 1 >= s->capacity) {
+        size_t capacity_new = s->capacity * 2;
+        char *data_new = realloc(s->data, sizeof(char) * capacity_new);
+        if (!data_new) {
+            return -1;
+        }
+        s->capacity = capacity_new;
+        s->data = data_new;
+    }
+    s->data[s->length++] = ch;
+    s->data[s->length] = '\0';
+    return 0;
+}
+
+String *string_from_stream(FILE *stream) {
+    String *s = string_new();
+    int ch;
+    while ((ch = fgetc(stream)) != EOF) {
+        if (string_push(s, ch) < 0) {
+            string_free(s);
+            return NULL;
+        }
+    }
+    return s;
+}
+
+typedef struct {
     uint16_t offset;
     uint8_t length;
     uint8_t symbol;
@@ -113,11 +170,10 @@ cleanup:
     return list;
 }
 
-TupleList *lz77_compress(const char *input) {
+TupleList *lz77_compress(String *input) {
     bool error = false;
     TupleList *output = NULL;
 
-    size_t input_length = strlen(input);
     output = tuple_list_new(TUPLE_LIST_CAPACITY);
     if (!output) {
         error = true;
@@ -125,14 +181,14 @@ TupleList *lz77_compress(const char *input) {
     }
 
     size_t position = 0;
-    while (position < input_length) {
+    while (position < input->length) {
         uint16_t max_offset = 0;
         uint8_t max_length = 0;
         for (size_t i = position; i-- > 0;) {
             uint8_t length = 0;
-            while (i + length < input_length &&
-                   position + length < input_length &&
-                   input[i + length] == input[position + length]) {
+            while (i + length < input->length &&
+                   position + length < input->length &&
+                   input->data[i + length] == input->data[position + length]) {
                 length += 1;
                 if (length > max_length) { 
                     max_length = length;
@@ -144,7 +200,7 @@ TupleList *lz77_compress(const char *input) {
         Tuple tuple = {
             .offset = max_offset,
             .length = max_length,
-            .symbol = position + max_length < input_length ? input[position + max_length] : '\0',
+            .symbol = position + max_length < input->length ? input->data[position + max_length] : '\0',
         };
         if (tuple_list_push(output, &tuple) < 0) {
             error = true;
@@ -177,14 +233,40 @@ typedef enum {
     MODE_DECOMPRESS,
 } Mode;
 
-int main(void) {
+int main(int argc, const char *argv[]) {
     int retcode = 0;
     Mode mode = MODE_COMPRESS;
+    FILE *input_file = NULL;
+    String *input = NULL;
     TupleList *tuples = NULL;
+
+    int arg_cursor = 0;
+    const char *program_name = argv[arg_cursor++];
+
+    if (arg_cursor >= argc) {
+        input_file = stdin;
+    } else if (argv[arg_cursor][0] == '-') {
+        arg_cursor++;
+        input_file = stdin;
+    } else {
+        const char *input_pathname = argv[arg_cursor++];
+        input_file = fopen(input_pathname, "r");
+        if (!input_file) {
+            fprintf(stderr, "error: input file '%s' open failed\n", input_pathname);
+            retcode = 1;
+            goto cleanup;
+        }
+    }
+
+    input = string_from_stream(input_file);
+    if (!input) {
+        fprintf(stderr, "error: string_from_stream failed\n");
+        retcode = 1;
+        goto cleanup;
+    }
 
     switch (mode) {
     case MODE_COMPRESS: {
-        const char *input = "abracadabrad";
         tuples = lz77_compress(input);
         if (!tuples) {
             fprintf(stderr, "error: lz77_compress failed\n");
@@ -206,6 +288,12 @@ int main(void) {
     }
 
 cleanup:
+    if (input_file) {
+        fclose(input_file);
+    }
+    if (input) {
+        string_free(input);
+    }
     if (tuples) {
         tuple_list_free(tuples);
     }
