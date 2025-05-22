@@ -4,9 +4,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define TUPLE_LIST_CAPACITY 64
-#define OUTPUT_CAPACITY 128
-
 void uint8_be_write(uint8_t *buf, uint8_t value) {
     buf[0] = value & 0xFF;
 }
@@ -66,6 +63,25 @@ int string_push(String *s, char ch) {
     }
     s->data[s->length++] = ch;
     s->data[s->length] = '\0';
+    return 0;
+}
+
+int string_move(String *s, const char *src, size_t n) {
+    char *buf = malloc(sizeof(char) * n);
+    if (!buf) {
+        return -1;
+    }
+    for (size_t i = 0; i < n; ++i) {
+        buf[i] = src[i];
+    }
+    for (size_t i = 0; i < n; ++i) {
+        char ch = buf[i];
+        if (string_push(s, ch) < 0) {
+            free(buf);
+            return -1;
+        }
+    }
+    free(buf);
     return 0;
 }
 
@@ -135,7 +151,11 @@ TupleList *tuple_list_deserialize(FILE *stream) {
     bool error = false;
     TupleList *list = NULL;
 
-    list = tuple_list_new(TUPLE_LIST_CAPACITY);
+    fseek(stream, 0, SEEK_END);
+    long file_size = ftell(stream);
+    rewind(stream);
+
+    list = tuple_list_new(file_size);
     if (!list) {
         error = true;
         goto cleanup;
@@ -174,7 +194,7 @@ TupleList *lz77_compress(String *input) {
     bool error = false;
     TupleList *output = NULL;
 
-    output = tuple_list_new(TUPLE_LIST_CAPACITY);
+    output = tuple_list_new(input->length);
     if (!output) {
         error = true;
         goto cleanup;
@@ -217,15 +237,23 @@ cleanup:
     return output;
 }
 
-void lz77_decompress(char *output, const TupleList *list) {
-    uint8_t length = 0;
+int lz77_decompress(const TupleList *list, FILE *stream) {
+    String *buf = string_new();
     for (size_t i = 0; i < list->length; ++i) {
         const Tuple *tuple = &list->data[i];
-        memcpy(output + length, output + length - tuple->offset, tuple->length);
-        length += tuple->length;
-        output[length++] = tuple->symbol;
+        if (string_move(buf, buf->data + buf->length - tuple->offset, tuple->length) < 0) {
+            return -1;
+        }
+        if (string_push(buf, tuple->symbol) < 0) {
+            return -1;
+        }
     }
-    output[length] = '\0';
+    size_t written = fwrite(buf->data, 1, buf->length, stream);
+    if (written != buf->length) {
+        return -1;
+    }
+    string_free(buf);
+    return 0;
 }
 
 typedef enum {
@@ -238,10 +266,19 @@ int main(int argc, const char *argv[]) {
     Mode mode = MODE_COMPRESS;
     FILE *input_file = NULL;
     String *input = NULL;
+    FILE *output_file = NULL;
     TupleList *tuples = NULL;
 
     int arg_cursor = 0;
     const char *program_name = argv[arg_cursor++];
+
+    for (int i = 0; i < argc; ++i) {
+        const char *arg = argv[i];
+        if (strcmp(arg, "-x") == 0) {
+            mode = MODE_DECOMPRESS;
+            arg_cursor += 1;
+        }
+    }
 
     if (arg_cursor >= argc) {
         input_file = stdin;
@@ -253,6 +290,18 @@ int main(int argc, const char *argv[]) {
         input_file = fopen(input_pathname, "r");
         if (!input_file) {
             fprintf(stderr, "error: input file '%s' open failed\n", input_pathname);
+            retcode = 1;
+            goto cleanup;
+        }
+    }
+
+    if (arg_cursor >= argc) {
+        output_file = stdout;
+    } else {
+        const char *output_pathname = argv[arg_cursor++];
+        output_file = fopen(output_pathname, "w");
+        if (!output_file) {
+            fprintf(stderr, "error: output file '%s' open failed\n", output_pathname);
             retcode = 1;
             goto cleanup;
         }
@@ -273,7 +322,7 @@ int main(int argc, const char *argv[]) {
             retcode = 1;
             goto cleanup;
         }
-        if (tuple_list_serialize(tuples, stdout) < 0) {
+        if (tuple_list_serialize(tuples, output_file) < 0) {
             fprintf(stderr, "error: tuple_list_serialize failed\n");
             retcode = 1;
             goto cleanup;
@@ -281,8 +330,17 @@ int main(int argc, const char *argv[]) {
         break;
     }
     case MODE_DECOMPRESS: {
-        char output[OUTPUT_CAPACITY];
-        lz77_decompress(output, tuples);
+        tuples = tuple_list_deserialize(input_file);
+        if (!tuples) {
+            fprintf(stderr, "error: tuple_list_deserialize failed\n");
+            retcode = 1;
+            goto cleanup;
+        }
+        if (lz77_decompress(tuples, output_file) < 0) {
+            fprintf(stderr, "error: lz77_decompress failed\n");
+            retcode = 1;
+            goto cleanup;
+        }
         break;
     }
     }
@@ -293,6 +351,9 @@ cleanup:
     }
     if (input) {
         string_free(input);
+    }
+    if (output_file) {
+        fclose(output_file);
     }
     if (tuples) {
         tuple_list_free(tuples);
