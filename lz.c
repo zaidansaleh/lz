@@ -264,6 +264,7 @@ typedef enum {
 int main(int argc, const char *argv[]) {
     int retcode = 0;
     Mode mode = MODE_COMPRESS;
+    bool show_help = false;
     FILE *input_file = NULL;
     String *input = NULL;
     FILE *output_file = NULL;
@@ -274,10 +275,28 @@ int main(int argc, const char *argv[]) {
 
     for (int i = 0; i < argc; ++i) {
         const char *arg = argv[i];
-        if (strcmp(arg, "-x") == 0) {
+        if (strcmp(arg, "-d") == 0 || strcmp(arg, "--decompress") == 0) {
             mode = MODE_DECOMPRESS;
             arg_cursor += 1;
+        } else if (strcmp(arg, "-h") == 0 || strcmp(arg, "--help") == 0) {
+            show_help = true;
+            arg_cursor += 1;
         }
+    }
+
+    if (show_help) {
+        printf(
+            "Usage: %s [options] [input] [output]\n"
+            "Compress input file using Lempel-Ziv algorithms.\n"
+            "\n"
+            "Options:\n"
+            "  %-17s %s\n"
+            "  %-17s %s\n",
+            program_name,
+            "-d, --decompress", "Decompress input instead of compressing",
+            "-h, --help", "Display this help message"
+        );
+        goto cleanup;
     }
 
     if (arg_cursor >= argc) {
