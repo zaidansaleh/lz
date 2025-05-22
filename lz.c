@@ -1,8 +1,33 @@
+#include <ctype.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+#define DEBUG_TUPLE (1 << 0)
+
+const char *escape_char(char ch) {
+    static char escape_char_buf[2];
+    if (isprint(ch)) {
+        escape_char_buf[0] = ch;
+        escape_char_buf[1] = '\0';
+        return escape_char_buf;
+    }
+    switch (ch) {
+    case '\n': return "\\n";
+    case '\t': return "\\t";
+    case '\r': return "\\r";
+    case '\b': return "\\b";
+    case '\f': return "\\f";
+    case '\v': return "\\v";
+    case '\\': return "\\\\";
+    case '\'': return "\\'";
+    case '\"': return "\\\"";
+    case '\0': return "\\0";
+    }
+    return NULL;
+}
 
 void uint8_be_write(uint8_t *buf, uint8_t value) {
     buf[0] = value & 0xFF;
@@ -237,6 +262,13 @@ cleanup:
     return output;
 }
 
+void tuple_list_pprint(const TupleList *list, FILE *stream) {
+    for (size_t i = 0; i < list->length; ++i) {
+        const Tuple *tuple = &list->data[i];
+        fprintf(stream, "(%d, %d, '%s')\n", tuple->offset, tuple->length, escape_char(tuple->symbol));
+    }
+}
+
 int lz77_decompress(const TupleList *list, FILE *stream) {
     String *buf = string_new();
     for (size_t i = 0; i < list->length; ++i) {
@@ -265,6 +297,7 @@ int main(int argc, const char *argv[]) {
     int retcode = 0;
     Mode mode = MODE_COMPRESS;
     bool show_help = false;
+    int debug = 0;
     FILE *input_file = NULL;
     String *input = NULL;
     FILE *output_file = NULL;
@@ -281,6 +314,12 @@ int main(int argc, const char *argv[]) {
         } else if (strcmp(arg, "-h") == 0 || strcmp(arg, "--help") == 0) {
             show_help = true;
             arg_cursor += 1;
+        } else if (strncmp(arg, "--debug-", 8) == 0) {
+            const char *debug_level = arg + 8;
+            if (strcmp(debug_level, "tuple") == 0) {
+                debug |= DEBUG_TUPLE;
+                arg_cursor += 1;
+            }
         }
     }
 
@@ -291,9 +330,11 @@ int main(int argc, const char *argv[]) {
             "\n"
             "Options:\n"
             "  %-17s %s\n"
+            "  %-17s %s\n"
             "  %-17s %s\n",
             program_name,
             "-d, --decompress", "Decompress input instead of compressing",
+            "--debug-tuple", "Print the tuple to stderr",
             "-h, --help", "Display this help message"
         );
         goto cleanup;
@@ -341,6 +382,9 @@ int main(int argc, const char *argv[]) {
             retcode = 1;
             goto cleanup;
         }
+        if (debug & DEBUG_TUPLE) {
+            tuple_list_pprint(tuples, stderr);
+        }
         if (tuple_list_serialize(tuples, output_file) < 0) {
             fprintf(stderr, "error: tuple_list_serialize failed\n");
             retcode = 1;
@@ -354,6 +398,9 @@ int main(int argc, const char *argv[]) {
             fprintf(stderr, "error: tuple_list_deserialize failed\n");
             retcode = 1;
             goto cleanup;
+        }
+        if (debug & DEBUG_TUPLE) {
+            tuple_list_pprint(tuples, stderr);
         }
         if (lz77_decompress(tuples, output_file) < 0) {
             fprintf(stderr, "error: lz77_decompress failed\n");
