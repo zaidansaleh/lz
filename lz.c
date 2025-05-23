@@ -5,7 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define DEBUG_TUPLE (1 << 0)
+#define DEBUG_LZ77TUPLE (1 << 0)
 
 const char *escape_char(char ch) {
     static char escape_char_buf[2];
@@ -91,25 +91,6 @@ int string_push(String *s, char ch) {
     return 0;
 }
 
-int string_move(String *s, const char *src, size_t n) {
-    char *buf = malloc(sizeof(char) * n);
-    if (!buf) {
-        return -1;
-    }
-    for (size_t i = 0; i < n; ++i) {
-        buf[i] = src[i];
-    }
-    for (size_t i = 0; i < n; ++i) {
-        char ch = buf[i];
-        if (string_push(s, ch) < 0) {
-            free(buf);
-            return -1;
-        }
-    }
-    free(buf);
-    return 0;
-}
-
 String *string_from_stream(FILE *stream) {
     String *s = string_new();
     int ch;
@@ -126,34 +107,34 @@ typedef struct {
     uint16_t offset;
     uint8_t length;
     uint8_t symbol;
-} Tuple;
+} LZ77Tuple;
 
-void tuple_print(const Tuple *tuple, FILE *stream) {
+void lz77tuple_print(const LZ77Tuple *tuple, FILE *stream) {
     fprintf(stream, "(%d, %d, '%s')\n", tuple->offset, tuple->length, escape_char(tuple->symbol));
 }
 
 typedef struct {
     size_t capacity;
     size_t length;
-    Tuple data[];
-} TupleList;
+    LZ77Tuple data[];
+} LZ77TupleList;
 
-TupleList *tuple_list_new(size_t capacity) {
-    TupleList *list = malloc(sizeof(TupleList) + sizeof(Tuple) * capacity);
+LZ77TupleList *lz77tuple_list_new(size_t capacity) {
+    LZ77TupleList *list = malloc(sizeof(LZ77TupleList) + sizeof(LZ77Tuple) * capacity);
     if (!list) {
         return NULL;
     }
     list->capacity = capacity;
     list->length = 0;
-    memset(list->data, 0, sizeof(Tuple) * capacity);
+    memset(list->data, 0, sizeof(LZ77Tuple) * capacity);
     return list;
 }
 
-void tuple_list_free(TupleList *list) {
+void lz77tuple_list_free(LZ77TupleList *list) {
     free(list);
 }
 
-int tuple_list_push(TupleList *list, const Tuple *tuple) {
+int lz77tuple_list_push(LZ77TupleList *list, const LZ77Tuple *tuple) {
     if (list->length >= list->capacity) {
         return -1;
     }
@@ -161,9 +142,9 @@ int tuple_list_push(TupleList *list, const Tuple *tuple) {
     return 0;
 }
 
-int tuple_list_serialize(const TupleList *list, FILE *stream) {
+int lz77tuple_list_serialize(const LZ77TupleList *list, FILE *stream) {
     for (size_t i = 0; i < list->length; ++i) {
-        const Tuple *tuple = &list->data[i];
+        const LZ77Tuple *tuple = &list->data[i];
         uint8_t buf[4];
         uint16_be_write(buf, tuple->offset);
         uint8_be_write(buf + 2, tuple->length);
@@ -176,15 +157,15 @@ int tuple_list_serialize(const TupleList *list, FILE *stream) {
     return 0;
 }
 
-TupleList *tuple_list_deserialize(FILE *stream) {
+LZ77TupleList *lz77tuple_list_deserialize(FILE *stream) {
     bool error = false;
-    TupleList *list = NULL;
+    LZ77TupleList *list = NULL;
 
     fseek(stream, 0, SEEK_END);
     long file_size = ftell(stream);
     rewind(stream);
 
-    list = tuple_list_new(file_size);
+    list = lz77tuple_list_new(file_size);
     if (!list) {
         error = true;
         goto cleanup;
@@ -200,12 +181,12 @@ TupleList *tuple_list_deserialize(FILE *stream) {
             error = true;
             goto cleanup;
         }
-        Tuple tuple = {
+        LZ77Tuple tuple = {
             .offset = uint16_be_read(buf),
             .length = uint8_be_read(buf + 2),
             .symbol = uint8_be_read(buf + 3),
         };
-        if (tuple_list_push(list, &tuple) < 0) {
+        if (lz77tuple_list_push(list, &tuple) < 0) {
             error = true;
             goto cleanup;
         }
@@ -213,17 +194,17 @@ TupleList *tuple_list_deserialize(FILE *stream) {
 
 cleanup:
     if (error) {
-        tuple_list_free(list);
+        lz77tuple_list_free(list);
         return NULL;
     }
     return list;
 }
 
-TupleList *lz77_compress(String *input) {
+LZ77TupleList *lz77_compress(String *input) {
     bool error = false;
-    TupleList *tuples = NULL;
+    LZ77TupleList *tuples = NULL;
 
-    tuples = tuple_list_new(input->length);
+    tuples = lz77tuple_list_new(input->length);
     if (!tuples) {
         error = true;
         goto cleanup;
@@ -247,12 +228,12 @@ TupleList *lz77_compress(String *input) {
 
         // WARNING: The null character ('\0') is used to indicate that there is no remaining symbol to emit.
         // This makes the implementation incompatible with binary input, where '\0' may be a valid data byte.
-        Tuple tuple = {
+        LZ77Tuple tuple = {
             .offset = match_offset,
             .length = match_length,
             .symbol = lookahead + match_length < input->length ? input->data[lookahead + match_length] : '\0',
         };
-        if (tuple_list_push(tuples, &tuple) < 0) {
+        if (lz77tuple_list_push(tuples, &tuple) < 0) {
             error = true;
             goto cleanup;
         }
@@ -261,23 +242,23 @@ TupleList *lz77_compress(String *input) {
 
 cleanup:
     if (error) {
-        tuple_list_free(tuples);
+        lz77tuple_list_free(tuples);
         return NULL;
     }
     return tuples;
 }
 
-void tuple_list_pprint(const TupleList *list, FILE *stream) {
+void lz77tuple_list_pprint(const LZ77TupleList *list, FILE *stream) {
     for (size_t i = 0; i < list->length; ++i) {
-        const Tuple *tuple = &list->data[i];
-        tuple_print(tuple, stream);
+        const LZ77Tuple *tuple = &list->data[i];
+        lz77tuple_print(tuple, stream);
     }
 }
 
-int lz77_decompress(const TupleList *list, FILE *stream) {
+int lz77_decompress(const LZ77TupleList *list, FILE *stream) {
     String *buf = string_new();
     for (size_t i = 0; i < list->length; ++i) {
-        const Tuple *tuple = &list->data[i];
+        const LZ77Tuple *tuple = &list->data[i];
         for (size_t j = 0; j < tuple->length; ++j) {
             if (string_push(buf, buf->data[buf->length - tuple->offset]) < 0) {
                 return -1;
@@ -308,7 +289,7 @@ int main(int argc, const char *argv[]) {
     FILE *input_file = NULL;
     String *input = NULL;
     FILE *output_file = NULL;
-    TupleList *tuples = NULL;
+    LZ77TupleList *tuples = NULL;
 
     int arg_cursor = 0;
     const char *program_name = argv[arg_cursor++];
@@ -324,7 +305,7 @@ int main(int argc, const char *argv[]) {
         } else if (strncmp(arg, "--debug-", 8) == 0) {
             const char *debug_level = arg + 8;
             if (strcmp(debug_level, "tuple") == 0) {
-                debug |= DEBUG_TUPLE;
+                debug |= DEBUG_LZ77TUPLE;
                 arg_cursor += 1;
             }
         }
@@ -389,25 +370,25 @@ int main(int argc, const char *argv[]) {
             retcode = 1;
             goto cleanup;
         }
-        if (debug & DEBUG_TUPLE) {
-            tuple_list_pprint(tuples, stderr);
+        if (debug & DEBUG_LZ77TUPLE) {
+            lz77tuple_list_pprint(tuples, stderr);
         }
-        if (tuple_list_serialize(tuples, output_file) < 0) {
-            fprintf(stderr, "error: tuple_list_serialize failed\n");
+        if (lz77tuple_list_serialize(tuples, output_file) < 0) {
+            fprintf(stderr, "error: lz77tuple_list_serialize failed\n");
             retcode = 1;
             goto cleanup;
         }
         break;
     }
     case MODE_DECOMPRESS: {
-        tuples = tuple_list_deserialize(input_file);
+        tuples = lz77tuple_list_deserialize(input_file);
         if (!tuples) {
-            fprintf(stderr, "error: tuple_list_deserialize failed\n");
+            fprintf(stderr, "error: lz77tuple_list_deserialize failed\n");
             retcode = 1;
             goto cleanup;
         }
-        if (debug & DEBUG_TUPLE) {
-            tuple_list_pprint(tuples, stderr);
+        if (debug & DEBUG_LZ77TUPLE) {
+            lz77tuple_list_pprint(tuples, stderr);
         }
         if (lz77_decompress(tuples, output_file) < 0) {
             fprintf(stderr, "error: lz77_decompress failed\n");
@@ -429,7 +410,7 @@ cleanup:
         fclose(output_file);
     }
     if (tuples) {
-        tuple_list_free(tuples);
+        lz77tuple_list_free(tuples);
     }
     return retcode;
 }
