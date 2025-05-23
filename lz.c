@@ -128,6 +128,10 @@ typedef struct {
     uint8_t symbol;
 } Tuple;
 
+void tuple_print(const Tuple *tuple, FILE *stream) {
+    fprintf(stream, "(%d, %d, '%s')\n", tuple->offset, tuple->length, escape_char(tuple->symbol));
+}
+
 typedef struct {
     size_t capacity;
     size_t length;
@@ -217,55 +221,54 @@ cleanup:
 
 TupleList *lz77_compress(String *input) {
     bool error = false;
-    TupleList *output = NULL;
+    TupleList *tuples = NULL;
 
-    output = tuple_list_new(input->length);
-    if (!output) {
+    tuples = tuple_list_new(input->length);
+    if (!tuples) {
         error = true;
         goto cleanup;
     }
 
-    size_t position = 0;
-    while (position < input->length) {
-        uint16_t max_offset = 0;
-        uint8_t max_length = 0;
-        for (size_t i = position; i-- > 0;) {
-            uint8_t length = 0;
-            while (i + length < input->length &&
-                   position + length < input->length &&
-                   input->data[i + length] == input->data[position + length]) {
+    for (size_t lookahead = 0; lookahead < input->length;) {
+        size_t match_offset = 0;
+        size_t match_length = 0;
+        for (size_t start = lookahead; start-- > 0;) {
+            size_t length = 0;
+            while (start + length < input->length &&
+                   lookahead + length < input->length &&
+                   input->data[start + length] == input->data[lookahead + length]) {
                 length += 1;
-                if (length > max_length) { 
-                    max_length = length;
-                    max_offset = position - i;
-                }
+            }
+            if (length > match_length) { 
+                match_length = length;
+                match_offset = lookahead - start;
             }
         }
 
         Tuple tuple = {
-            .offset = max_offset,
-            .length = max_length,
-            .symbol = position + max_length < input->length ? input->data[position + max_length] : '\0',
+            .offset = match_offset,
+            .length = match_length,
+            .symbol = lookahead + match_length < input->length ? input->data[lookahead + match_length] : '\0',
         };
-        if (tuple_list_push(output, &tuple) < 0) {
+        if (tuple_list_push(tuples, &tuple) < 0) {
             error = true;
             goto cleanup;
         }
-        position += max_length + 1;
+        lookahead += match_length + 1;
     }
 
 cleanup:
     if (error) {
-        tuple_list_free(output);
+        tuple_list_free(tuples);
         return NULL;
     }
-    return output;
+    return tuples;
 }
 
 void tuple_list_pprint(const TupleList *list, FILE *stream) {
     for (size_t i = 0; i < list->length; ++i) {
         const Tuple *tuple = &list->data[i];
-        fprintf(stream, "(%d, %d, '%s')\n", tuple->offset, tuple->length, escape_char(tuple->symbol));
+        tuple_print(tuple, stream);
     }
 }
 
