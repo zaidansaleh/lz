@@ -245,6 +245,8 @@ TupleList *lz77_compress(String *input) {
             }
         }
 
+        // WARNING: The null character ('\0') is used to indicate that there is no remaining symbol to emit.
+        // This makes the implementation incompatible with binary input, where '\0' may be a valid data byte.
         Tuple tuple = {
             .offset = match_offset,
             .length = match_length,
@@ -276,10 +278,12 @@ int lz77_decompress(const TupleList *list, FILE *stream) {
     String *buf = string_new();
     for (size_t i = 0; i < list->length; ++i) {
         const Tuple *tuple = &list->data[i];
-        if (string_move(buf, buf->data + buf->length - tuple->offset, tuple->length) < 0) {
-            return -1;
+        for (size_t j = 0; j < tuple->length; ++j) {
+            if (string_push(buf, buf->data[buf->length - tuple->offset]) < 0) {
+                return -1;
+            }
         }
-        if (string_push(buf, tuple->symbol) < 0) {
+        if (tuple->symbol != '\0' && string_push(buf, tuple->symbol) < 0) {
             return -1;
         }
     }
