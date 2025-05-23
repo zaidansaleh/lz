@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MIT */
+/* Copyright (c) 2025 Saleh Zaidan */
+
 #include <ctype.h>
 #include <stdbool.h>
 #include <stdint.h>
