@@ -8,9 +8,10 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "lz.h"
 #include "string.h"
 
-#define DEBUG_LZ77TUPLE (1 << 0)
+#define DEBUG_COMPRESSED_REPR (1 << 0)
 
 const char *escape_char(char ch) {
     static char escape_char_buf[2];
@@ -51,168 +52,73 @@ uint16_t uint16_be_read(uint8_t *buf) {
     return buf[0] << 8 | buf[1];
 }
 
-typedef struct {
-    uint16_t offset;
-    uint8_t length;
-    uint8_t symbol;
-} LZ77Tuple;
-
-void lz77tuple_print(const LZ77Tuple *tuple, FILE *stream) {
-    fprintf(stream, "(%d, %d, '%s')\n", tuple->offset, tuple->length, escape_char(tuple->symbol));
-}
-
-typedef struct {
-    size_t capacity;
-    size_t length;
-    LZ77Tuple data[];
-} LZ77TupleList;
-
-LZ77TupleList *lz77tuple_list_new(size_t capacity) {
-    LZ77TupleList *list = malloc(sizeof(LZ77TupleList) + sizeof(LZ77Tuple) * capacity);
+CompressedReprList *cr_list_new(Algo algo, size_t capacity) {
+    CompressedReprList *list = malloc(sizeof(CompressedReprList) + sizeof(CompressedRepr) * capacity);
     if (!list) {
         return NULL;
     }
+    list->algo = algo;
     list->capacity = capacity;
     list->length = 0;
-    memset(list->data, 0, sizeof(LZ77Tuple) * capacity);
+    memset(list->data, 0, sizeof(CompressedRepr) * capacity);
     return list;
 }
 
-void lz77tuple_list_free(LZ77TupleList *list) {
+void cr_list_free(CompressedReprList *list) {
     free(list);
 }
 
-int lz77tuple_list_push(LZ77TupleList *list, const LZ77Tuple *tuple) {
+int cr_list_push(CompressedReprList *list, const CompressedRepr *cr) {
     if (list->length >= list->capacity) {
         return -1;
     }
-    list->data[list->length++] = *tuple;
+    list->data[list->length++] = *cr;
     return 0;
 }
 
-int lz77tuple_list_serialize(const LZ77TupleList *list, FILE *stream) {
+int lz_serialize(const CompressedReprList *list, FILE *stream) {
+    int (*fn)(const CompressedRepr *, FILE *);
+    switch (list->algo) {
+    case ALGO_LZ77:
+        fn = lz77_serialize;
+        break;
+    }
     for (size_t i = 0; i < list->length; ++i) {
-        const LZ77Tuple *tuple = &list->data[i];
-        uint8_t buf[4];
-        uint16_be_write(buf, tuple->offset);
-        uint8_be_write(buf + 2, tuple->length);
-        uint8_be_write(buf + 3, tuple->symbol);
-        size_t written = fwrite(buf, 1, sizeof(buf), stream);
-        if (written != sizeof(buf)) {
+        const CompressedRepr *cr = &list->data[i];
+        if (fn(cr, stream) < 0) {
             return -1;
         }
     }
     return 0;
 }
 
-LZ77TupleList *lz77tuple_list_deserialize(FILE *stream) {
-    bool error = false;
-    LZ77TupleList *list = NULL;
-
-    fseek(stream, 0, SEEK_END);
-    long file_size = ftell(stream);
-    rewind(stream);
-
-    list = lz77tuple_list_new(file_size);
-    if (!list) {
-        error = true;
-        goto cleanup;
+CompressedReprList *lz_deserialize(Algo algo, FILE *stream) {
+    switch (algo) {
+    case ALGO_LZ77:
+        return lz77_deserialize(stream);
     }
-
-    while (true) {
-        uint8_t buf[4];
-        size_t read = fread(buf, 1, sizeof(buf), stream);
-        if (read != sizeof(buf)) {
-            if (feof(stream)) {
-                break;
-            }
-            error = true;
-            goto cleanup;
-        }
-        LZ77Tuple tuple = {
-            .offset = uint16_be_read(buf),
-            .length = uint8_be_read(buf + 2),
-            .symbol = uint8_be_read(buf + 3),
-        };
-        if (lz77tuple_list_push(list, &tuple) < 0) {
-            error = true;
-            goto cleanup;
-        }
-    }
-
-cleanup:
-    if (error) {
-        lz77tuple_list_free(list);
-        return NULL;
-    }
-    return list;
+    return NULL;
 }
 
-LZ77TupleList *lz77_compress(String *input) {
-    bool error = false;
-    LZ77TupleList *tuples = NULL;
-
-    tuples = lz77tuple_list_new(input->length);
-    if (!tuples) {
-        error = true;
-        goto cleanup;
+CompressedReprList *lz_compress(Algo algo, String *input) {
+    switch (algo) {
+    case ALGO_LZ77:
+        return lz77_compress(input);
     }
-
-    for (size_t lookahead = 0; lookahead < input->length;) {
-        size_t match_offset = 0;
-        size_t match_length = 0;
-        for (size_t start = lookahead; start-- > 0;) {
-            size_t length = 0;
-            while (start + length < input->length &&
-                   lookahead + length < input->length &&
-                   input->data[start + length] == input->data[lookahead + length]) {
-                length += 1;
-            }
-            if (length > match_length) { 
-                match_length = length;
-                match_offset = lookahead - start;
-            }
-        }
-
-        // WARNING: The null character ('\0') is used to indicate that there is no remaining symbol to emit.
-        // This makes the implementation incompatible with binary input, where '\0' may be a valid data byte.
-        LZ77Tuple tuple = {
-            .offset = match_offset,
-            .length = match_length,
-            .symbol = lookahead + match_length < input->length ? input->data[lookahead + match_length] : '\0',
-        };
-        if (lz77tuple_list_push(tuples, &tuple) < 0) {
-            error = true;
-            goto cleanup;
-        }
-        lookahead += match_length + 1;
-    }
-
-cleanup:
-    if (error) {
-        lz77tuple_list_free(tuples);
-        return NULL;
-    }
-    return tuples;
+    return NULL;
 }
 
-void lz77tuple_list_pprint(const LZ77TupleList *list, FILE *stream) {
-    for (size_t i = 0; i < list->length; ++i) {
-        const LZ77Tuple *tuple = &list->data[i];
-        lz77tuple_print(tuple, stream);
+int lz_decompress(const CompressedReprList *list, FILE *stream) {
+    int (*fn)(const CompressedRepr *, String *);
+    switch (list->algo) {
+    case ALGO_LZ77:
+        fn = lz77_decompress;
+        break;
     }
-}
-
-int lz77_decompress(const LZ77TupleList *list, FILE *stream) {
     String *buf = string_new();
     for (size_t i = 0; i < list->length; ++i) {
-        const LZ77Tuple *tuple = &list->data[i];
-        for (size_t j = 0; j < tuple->length; ++j) {
-            if (string_push(buf, buf->data[buf->length - tuple->offset]) < 0) {
-                return -1;
-            }
-        }
-        if (tuple->symbol != '\0' && string_push(buf, tuple->symbol) < 0) {
+        const CompressedRepr *cr = &list->data[i];
+        if (fn(cr, buf) < 0) {
             return -1;
         }
     }
@@ -222,6 +128,19 @@ int lz77_decompress(const LZ77TupleList *list, FILE *stream) {
     }
     string_free(buf);
     return 0;
+}
+
+void lz_print(const CompressedReprList *list, FILE *stream) {
+    void (*fn)(const CompressedRepr *, FILE *);
+    switch (list->algo) {
+    case ALGO_LZ77:
+        fn = lz77_print;
+        break;
+    }
+    for (size_t i = 0; i < list->length; ++i) {
+        const CompressedRepr *cr = &list->data[i];
+        fn(cr, stream);
+    }
 }
 
 typedef enum {
@@ -237,7 +156,7 @@ int main(int argc, const char *argv[]) {
     FILE *input_file = NULL;
     String *input = NULL;
     FILE *output_file = NULL;
-    LZ77TupleList *tuples = NULL;
+    CompressedReprList *cr_list = NULL;
 
     int arg_cursor = 0;
     const char *program_name = argv[arg_cursor++];
@@ -252,8 +171,8 @@ int main(int argc, const char *argv[]) {
             arg_cursor += 1;
         } else if (strncmp(arg, "--debug-", 8) == 0) {
             const char *debug_level = arg + 8;
-            if (strcmp(debug_level, "tuple") == 0) {
-                debug |= DEBUG_LZ77TUPLE;
+            if (strcmp(debug_level, "cr") == 0) {
+                debug |= DEBUG_COMPRESSED_REPR;
                 arg_cursor += 1;
             }
         }
@@ -270,7 +189,7 @@ int main(int argc, const char *argv[]) {
             "  %-17s %s\n",
             program_name,
             "-d, --decompress", "Decompress input instead of compressing",
-            "--debug-tuple", "Print the tuple to stderr",
+            "--debug-cr", "Print the compressed representation to stderr",
             "-h, --help", "Display this help message"
         );
         goto cleanup;
@@ -312,34 +231,34 @@ int main(int argc, const char *argv[]) {
 
     switch (mode) {
     case MODE_COMPRESS: {
-        tuples = lz77_compress(input);
-        if (!tuples) {
-            fprintf(stderr, "error: lz77_compress failed\n");
+        cr_list = lz_compress(ALGO_LZ77, input);
+        if (!cr_list) {
+            fprintf(stderr, "error: lz_compress failed\n");
             retcode = 1;
             goto cleanup;
         }
-        if (debug & DEBUG_LZ77TUPLE) {
-            lz77tuple_list_pprint(tuples, stderr);
+        if (debug & DEBUG_COMPRESSED_REPR) {
+            lz_print(cr_list, stderr);
         }
-        if (lz77tuple_list_serialize(tuples, output_file) < 0) {
-            fprintf(stderr, "error: lz77tuple_list_serialize failed\n");
+        if (lz_serialize(cr_list, output_file) < 0) {
+            fprintf(stderr, "error: lz_serialize failed\n");
             retcode = 1;
             goto cleanup;
         }
         break;
     }
     case MODE_DECOMPRESS: {
-        tuples = lz77tuple_list_deserialize(input_file);
-        if (!tuples) {
-            fprintf(stderr, "error: lz77tuple_list_deserialize failed\n");
+        cr_list = lz_deserialize(ALGO_LZ77, input_file);
+        if (!cr_list) {
+            fprintf(stderr, "error: lz_deserialize failed\n");
             retcode = 1;
             goto cleanup;
         }
-        if (debug & DEBUG_LZ77TUPLE) {
-            lz77tuple_list_pprint(tuples, stderr);
+        if (debug & DEBUG_COMPRESSED_REPR) {
+            lz_print(cr_list, stderr);
         }
-        if (lz77_decompress(tuples, output_file) < 0) {
-            fprintf(stderr, "error: lz77_decompress failed\n");
+        if (lz_decompress(cr_list, output_file) < 0) {
+            fprintf(stderr, "error: lz_decompress failed\n");
             retcode = 1;
             goto cleanup;
         }
@@ -357,8 +276,8 @@ cleanup:
     if (output_file) {
         fclose(output_file);
     }
-    if (tuples) {
-        lz77tuple_list_free(tuples);
+    if (cr_list) {
+        cr_list_free(cr_list);
     }
     return retcode;
 }
