@@ -52,47 +52,17 @@ uint16_t uint16_be_read(uint8_t *buf) {
     return buf[0] << 8 | buf[1];
 }
 
-CompressedReprList *cr_list_new(Algo algo, size_t capacity) {
-    CompressedReprList *list = malloc(sizeof(CompressedReprList) + sizeof(CompressedRepr) * capacity);
-    if (!list) {
-        return NULL;
-    }
-    list->algo = algo;
-    list->capacity = capacity;
-    list->length = 0;
-    memset(list->data, 0, sizeof(CompressedRepr) * capacity);
-    return list;
-}
-
-void cr_list_free(CompressedReprList *list) {
-    free(list);
-}
-
-int cr_list_push(CompressedReprList *list, const CompressedRepr *cr) {
-    if (list->length >= list->capacity) {
-        return -1;
-    }
-    list->data[list->length++] = *cr;
-    return 0;
-}
-
-int lz_serialize(const CompressedReprList *list, FILE *stream) {
-    int (*fn)(const CompressedRepr *, FILE *);
-    switch (list->algo) {
+int lz_serialize(Algo algo, const void *compressed, FILE *stream) {
+    int (*fn)(const void *, FILE *);
+    switch (algo) {
     case ALGO_LZ77:
         fn = lz77_serialize;
         break;
     }
-    for (size_t i = 0; i < list->length; ++i) {
-        const CompressedRepr *cr = &list->data[i];
-        if (fn(cr, stream) < 0) {
-            return -1;
-        }
-    }
-    return 0;
+    return fn(compressed, stream);
 }
 
-CompressedReprList *lz_deserialize(Algo algo, FILE *stream) {
+void *lz_deserialize(Algo algo, FILE *stream) {
     switch (algo) {
     case ALGO_LZ77:
         return lz77_deserialize(stream);
@@ -100,7 +70,7 @@ CompressedReprList *lz_deserialize(Algo algo, FILE *stream) {
     return NULL;
 }
 
-CompressedReprList *lz_compress(Algo algo, String *input) {
+void *lz_compress(Algo algo, const String *input) {
     switch (algo) {
     case ALGO_LZ77:
         return lz77_compress(input);
@@ -108,15 +78,15 @@ CompressedReprList *lz_compress(Algo algo, String *input) {
     return NULL;
 }
 
-int lz_decompress(const CompressedReprList *list, FILE *stream) {
-    String *(*fn)(const CompressedReprList *);
-    switch (list->algo) {
+int lz_decompress(Algo algo, const void *compressed, FILE *stream) {
+    String *(*fn)(const void *);
+    switch (algo) {
     case ALGO_LZ77:
         fn = lz77_decompress;
         break;
     }
 
-    String *buf = fn(list);
+    String *buf = fn(compressed);
     if (!buf) {
         string_free(buf);
         return -1;
@@ -132,17 +102,24 @@ int lz_decompress(const CompressedReprList *list, FILE *stream) {
     return 0;
 }
 
-void lz_print(const CompressedReprList *list, FILE *stream) {
-    void (*fn)(const CompressedRepr *, FILE *);
-    switch (list->algo) {
+void lz_print(Algo algo, const void *compressed, FILE *stream) {
+    void (*fn)(const void *, FILE *);
+    switch (algo) {
     case ALGO_LZ77:
         fn = lz77_print;
         break;
     }
-    for (size_t i = 0; i < list->length; ++i) {
-        const CompressedRepr *cr = &list->data[i];
-        fn(cr, stream);
+    fn(compressed, stream);
+}
+
+void lz_free(Algo algo, void *compressed) {
+    void (*fn)(void *);
+    switch (algo) {
+        case ALGO_LZ77:
+        fn = lz77_free;
+        break;
     }
+    fn(compressed);
 }
 
 typedef enum {
@@ -158,7 +135,7 @@ int main(int argc, const char *argv[]) {
     FILE *input_file = NULL;
     String *input = NULL;
     FILE *output_file = NULL;
-    CompressedReprList *cr_list = NULL;
+    void *compressed = NULL;
 
     int arg_cursor = 0;
     const char *program_name = argv[arg_cursor++];
@@ -233,16 +210,16 @@ int main(int argc, const char *argv[]) {
 
     switch (mode) {
     case MODE_COMPRESS: {
-        cr_list = lz_compress(ALGO_LZ77, input);
-        if (!cr_list) {
+        compressed = lz_compress(ALGO_LZ77, input);
+        if (!compressed) {
             fprintf(stderr, "error: lz_compress failed\n");
             retcode = 1;
             goto cleanup;
         }
         if (debug & DEBUG_COMPRESSED_REPR) {
-            lz_print(cr_list, stderr);
+            lz_print(ALGO_LZ77, compressed, stderr);
         }
-        if (lz_serialize(cr_list, output_file) < 0) {
+        if (lz_serialize(ALGO_LZ77, compressed, output_file) < 0) {
             fprintf(stderr, "error: lz_serialize failed\n");
             retcode = 1;
             goto cleanup;
@@ -250,16 +227,16 @@ int main(int argc, const char *argv[]) {
         break;
     }
     case MODE_DECOMPRESS: {
-        cr_list = lz_deserialize(ALGO_LZ77, input_file);
-        if (!cr_list) {
+        compressed = lz_deserialize(ALGO_LZ77, input_file);
+        if (!compressed) {
             fprintf(stderr, "error: lz_deserialize failed\n");
             retcode = 1;
             goto cleanup;
         }
         if (debug & DEBUG_COMPRESSED_REPR) {
-            lz_print(cr_list, stderr);
+            lz_print(ALGO_LZ77, compressed, stderr);
         }
-        if (lz_decompress(cr_list, output_file) < 0) {
+        if (lz_decompress(ALGO_LZ77, compressed, output_file) < 0) {
             fprintf(stderr, "error: lz_decompress failed\n");
             retcode = 1;
             goto cleanup;
@@ -278,8 +255,8 @@ cleanup:
     if (output_file) {
         fclose(output_file);
     }
-    if (cr_list) {
-        cr_list_free(cr_list);
+    if (compressed) {
+        lz_free(ALGO_LZ77, compressed);
     }
     return retcode;
 }

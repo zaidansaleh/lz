@@ -1,31 +1,59 @@
+/* SPDX-License-Identifier: MIT */
+/* Copyright (c) 2025 Saleh Zaidan */
+
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
 #include "lz.h"
 #include "string.h"
 
-int lz77_serialize(const CompressedRepr *cr, FILE *stream) {
-    uint8_t buf[4];
-    uint16_be_write(buf, cr->lz77.offset);
-    uint8_be_write(buf + 2, cr->lz77.length);
-    uint8_be_write(buf + 3, cr->lz77.symbol);
-    size_t written = fwrite(buf, 1, sizeof(buf), stream);
-    if (written != sizeof(buf)) {
+LZ77_TupleList *lz77_tuple_list_new(size_t capacity) {
+    LZ77_TupleList *list = malloc(sizeof(LZ77_TupleList) + sizeof(LZ77_Tuple) * capacity);
+    if (!list) {
+        return NULL;
+    }
+    list->capacity = capacity;
+    list->length = 0;
+    memset(list->data, 0, sizeof(LZ77_Tuple) * capacity);
+    return list;
+}
+
+int lz77_tuple_list_push(LZ77_TupleList *list, const LZ77_Tuple *tuple) {
+    if (list->length >= list->capacity) {
         return -1;
+    }
+    list->data[list->length++] = *tuple;
+    return 0;
+}
+
+int lz77_serialize(const void *compressed, FILE *stream) {
+    const LZ77_TupleList *list = compressed;
+    for (size_t i = 0; i < list->length; ++i) {
+        const LZ77_Tuple *tuple = &list->data[i];
+        uint8_t buf[4];
+        uint16_be_write(buf, tuple->offset);
+        uint8_be_write(buf + 2, tuple->length);
+        uint8_be_write(buf + 3, tuple->symbol);
+        size_t written = fwrite(buf, 1, sizeof(buf), stream);
+        if (written != sizeof(buf)) {
+            return -1;
+        }
     }
     return 0;
 }
 
-CompressedReprList *lz77_deserialize(FILE *stream) {
+void *lz77_deserialize(FILE *stream) {
     bool error = false;
-    CompressedReprList *list = NULL;
+    LZ77_TupleList *list = NULL;
 
     fseek(stream, 0, SEEK_END);
     long file_size = ftell(stream);
     rewind(stream);
 
-    list = cr_list_new(ALGO_LZ77, file_size);
+    list = lz77_tuple_list_new(file_size);
     if (!list) {
         error = true;
         goto cleanup;
@@ -41,14 +69,12 @@ CompressedReprList *lz77_deserialize(FILE *stream) {
             error = true;
             goto cleanup;
         }
-        CompressedRepr cr = {
-            .lz77 = {
-                .offset = uint16_be_read(buf),
-                .length = uint8_be_read(buf + 2),
-                .symbol = uint8_be_read(buf + 3),
-            },
+        LZ77_Tuple cr = {
+            .offset = uint16_be_read(buf),
+            .length = uint8_be_read(buf + 2),
+            .symbol = uint8_be_read(buf + 3),
         };
-        if (cr_list_push(list, &cr) < 0) {
+        if (lz77_tuple_list_push(list, &cr) < 0) {
             error = true;
             goto cleanup;
         }
@@ -56,17 +82,17 @@ CompressedReprList *lz77_deserialize(FILE *stream) {
 
     cleanup:
     if (error) {
-        cr_list_free(list);
+        free(list);
         return NULL;
     }
     return list;
 }
 
-CompressedReprList *lz77_compress(String *input) {
+void *lz77_compress(const String *input) {
     bool error = false;
-    CompressedReprList *list = NULL;
+    LZ77_TupleList *list = NULL;
 
-    list = cr_list_new(ALGO_LZ77, input->length);
+    list = lz77_tuple_list_new(input->length);
     if (!list) {
         error = true;
         goto cleanup;
@@ -90,14 +116,12 @@ CompressedReprList *lz77_compress(String *input) {
 
         // WARNING: The null character ('\0') is used to indicate that there is no remaining symbol to emit.
         // This makes the implementation incompatible with binary input, where '\0' may be a valid data byte.
-        CompressedRepr cr = {
-            .lz77 = {
-                .offset = match_offset,
-                .length = match_length,
-                .symbol = lookahead + match_length < input->length ? input->data[lookahead + match_length] : '\0',
-            }
+        LZ77_Tuple tuple = {
+            .offset = match_offset,
+            .length = match_length,
+            .symbol = lookahead + match_length < input->length ? input->data[lookahead + match_length] : '\0',
         };
-        if (cr_list_push(list, &cr) < 0) {
+        if (lz77_tuple_list_push(list, &tuple) < 0) {
             error = true;
             goto cleanup;
         }
@@ -106,13 +130,14 @@ CompressedReprList *lz77_compress(String *input) {
 
     cleanup:
     if (error) {
-        cr_list_free(list);
+        free(list);
         return NULL;
     }
     return list;
 }
 
-String *lz77_decompress(const CompressedReprList *list) {
+String *lz77_decompress(const void *compressed) {
+    const LZ77_TupleList *list = compressed;
     bool error = false;
     String *buf = NULL;
 
@@ -122,14 +147,14 @@ String *lz77_decompress(const CompressedReprList *list) {
         goto cleanup;
     }
     for (size_t i = 0; i < list->length; ++i) {
-        const CompressedRepr *cr = &list->data[i];
-        for (size_t j = 0; j < cr->lz77.length; ++j) {
-            if (string_push(buf, buf->data[buf->length - cr->lz77.offset]) < 0) {
+        const LZ77_Tuple *tuple = &list->data[i];
+        for (size_t j = 0; j < tuple->length; ++j) {
+            if (string_push(buf, buf->data[buf->length - tuple->offset]) < 0) {
                 error = true;
                 goto cleanup;
             }
         }
-        if (cr->lz77.symbol != '\0' && string_push(buf, cr->lz77.symbol) < 0) {
+        if (tuple->symbol != '\0' && string_push(buf, tuple->symbol) < 0) {
             error = true;
             goto cleanup;
         }
@@ -143,7 +168,12 @@ cleanup:
     return buf;
 }
 
-void lz77_print(const CompressedRepr *cr, FILE *stream) {
-    fprintf(stream, "(%d, %d, '%s')\n", cr->lz77.offset, cr->lz77.length, escape_char(cr->lz77.symbol));
+void lz77_print(const void *compressed, FILE *stream) {
+    const LZ77_Tuple *tuple = compressed;
+    fprintf(stream, "(%d, %d, '%s')\n", tuple->offset, tuple->length, escape_char(tuple->symbol));
+}
+
+void lz77_free(void *compressed) {
+    free(compressed);
 }
 
