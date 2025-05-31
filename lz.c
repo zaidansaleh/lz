@@ -129,6 +129,7 @@ typedef enum {
 
 int main(int argc, const char *argv[]) {
     int retcode = 0;
+    Algo algo = ALGO_LZ77;
     Mode mode = MODE_COMPRESS;
     bool show_help = false;
     int debug = 0;
@@ -142,7 +143,12 @@ int main(int argc, const char *argv[]) {
 
     for (int i = 0; i < argc; ++i) {
         const char *arg = argv[i];
-        if (strcmp(arg, "-d") == 0 || strcmp(arg, "--decompress") == 0) {
+        if (strcmp(arg, "-a") == 0 || strcmp(arg, "--algo") == 0) {
+            const char *algo_str = argv[++i];
+            if (strcmp(algo_str, "LZ77") == 0) {
+                algo = ALGO_LZ77;
+            }
+        } else if (strcmp(arg, "-d") == 0 || strcmp(arg, "--decompress") == 0) {
             mode = MODE_DECOMPRESS;
             arg_cursor += 1;
         } else if (strcmp(arg, "-h") == 0 || strcmp(arg, "--help") == 0) {
@@ -165,8 +171,10 @@ int main(int argc, const char *argv[]) {
             "Options:\n"
             "  %-17s %s\n"
             "  %-17s %s\n"
+            "  %-17s %s\n"
             "  %-17s %s\n",
             program_name,
+            "-a, --algo", "The compression algorithm to use (default: LZ77)",
             "-d, --decompress", "Decompress input instead of compressing",
             "--debug-cr", "Print the compressed representation to stderr",
             "-h, --help", "Display this help message"
