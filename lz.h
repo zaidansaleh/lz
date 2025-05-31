@@ -46,7 +46,7 @@ const char *escape_char(char ch);
 int lz77_serialize(const CompressedRepr *cr, FILE *stream);
 CompressedReprList *lz77_deserialize(FILE *stream);
 CompressedReprList *lz77_compress(String *input);
-int lz77_decompress(const CompressedRepr *cr, String *buf);
+String *lz77_decompress(const CompressedReprList *list);
 void lz77_print(const CompressedRepr *cr, FILE *stream);
 
 #endif // LZ_H

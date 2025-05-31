@@ -112,16 +112,35 @@ CompressedReprList *lz77_compress(String *input) {
     return list;
 }
 
-int lz77_decompress(const CompressedRepr *cr, String *buf) {
-    for (size_t j = 0; j < cr->lz77.length; ++j) {
-        if (string_push(buf, buf->data[buf->length - cr->lz77.offset]) < 0) {
-            return -1;
+String *lz77_decompress(const CompressedReprList *list) {
+    bool error = false;
+    String *buf = NULL;
+
+    buf = string_new();
+    if (!buf) {
+        error = true;
+        goto cleanup;
+    }
+    for (size_t i = 0; i < list->length; ++i) {
+        const CompressedRepr *cr = &list->data[i];
+        for (size_t j = 0; j < cr->lz77.length; ++j) {
+            if (string_push(buf, buf->data[buf->length - cr->lz77.offset]) < 0) {
+                error = true;
+                goto cleanup;
+            }
+        }
+        if (cr->lz77.symbol != '\0' && string_push(buf, cr->lz77.symbol) < 0) {
+            error = true;
+            goto cleanup;
         }
     }
-    if (cr->lz77.symbol != '\0' && string_push(buf, cr->lz77.symbol) < 0) {
-        return -1;
+
+cleanup:
+    if (error) {
+        string_free(buf);
+        return NULL;
     }
-    return 0;
+    return buf;
 }
 
 void lz77_print(const CompressedRepr *cr, FILE *stream) {

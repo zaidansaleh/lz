@@ -109,23 +109,25 @@ CompressedReprList *lz_compress(Algo algo, String *input) {
 }
 
 int lz_decompress(const CompressedReprList *list, FILE *stream) {
-    int (*fn)(const CompressedRepr *, String *);
+    String *(*fn)(const CompressedReprList *);
     switch (list->algo) {
     case ALGO_LZ77:
         fn = lz77_decompress;
         break;
     }
-    String *buf = string_new();
-    for (size_t i = 0; i < list->length; ++i) {
-        const CompressedRepr *cr = &list->data[i];
-        if (fn(cr, buf) < 0) {
-            return -1;
-        }
-    }
-    size_t written = fwrite(buf->data, 1, buf->length, stream);
-    if (written != buf->length) {
+
+    String *buf = fn(list);
+    if (!buf) {
+        string_free(buf);
         return -1;
     }
+
+    size_t written = fwrite(buf->data, 1, buf->length, stream);
+    if (written != buf->length) {
+        string_free(buf);
+        return -1;
+    }
+
     string_free(buf);
     return 0;
 }
