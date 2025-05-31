@@ -169,8 +169,11 @@ cleanup:
 }
 
 void lz77_print(const void *compressed, FILE *stream) {
-    const LZ77_Tuple *tuple = compressed;
-    fprintf(stream, "(%d, %d, '%s')\n", tuple->offset, tuple->length, escape_char(tuple->symbol));
+    const LZ77_TupleList *list = compressed;
+    for (size_t i = 0; i < list->length; ++i) {
+        const LZ77_Tuple *tuple = &list->data[i];
+        fprintf(stream, "(%d, %d, '%s')\n", tuple->offset, tuple->length, escape_char(tuple->symbol));
+    }
 }
 
 void lz77_free(void *compressed) {
