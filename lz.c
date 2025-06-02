@@ -9,6 +9,7 @@
 #include <string.h>
 
 #include "lz.h"
+#include "lz78.h"
 #include "string.h"
 
 #define DEBUG_COMPRESSED_REPR (1 << 0)
@@ -58,6 +59,9 @@ int lz_serialize(Algo algo, const void *compressed, FILE *stream) {
     case ALGO_LZ77:
         fn = lz77_serialize;
         break;
+    case ALGO_LZ78:
+        fn = lz78_serialize;
+        break;
     }
     return fn(compressed, stream);
 }
@@ -66,6 +70,8 @@ void *lz_deserialize(Algo algo, FILE *stream) {
     switch (algo) {
     case ALGO_LZ77:
         return lz77_deserialize(stream);
+    case ALGO_LZ78:
+        return lz78_deserialize(stream);
     }
     return NULL;
 }
@@ -74,6 +80,8 @@ void *lz_compress(Algo algo, const String *input) {
     switch (algo) {
     case ALGO_LZ77:
         return lz77_compress(input);
+    case ALGO_LZ78:
+        return lz78_compress(input);
     }
     return NULL;
 }
@@ -84,11 +92,13 @@ int lz_decompress(Algo algo, const void *compressed, FILE *stream) {
     case ALGO_LZ77:
         fn = lz77_decompress;
         break;
+    case ALGO_LZ78:
+        fn = lz78_decompress;
+        break;
     }
 
     String *buf = fn(compressed);
     if (!buf) {
-        string_free(buf);
         return -1;
     }
 
@@ -108,6 +118,9 @@ void lz_print(Algo algo, const void *compressed, FILE *stream) {
     case ALGO_LZ77:
         fn = lz77_print;
         break;
+    case ALGO_LZ78:
+        fn = lz78_print;
+        break;
     }
     fn(compressed, stream);
 }
@@ -115,8 +128,11 @@ void lz_print(Algo algo, const void *compressed, FILE *stream) {
 void lz_free(Algo algo, void *compressed) {
     void (*fn)(void *);
     switch (algo) {
-        case ALGO_LZ77:
+    case ALGO_LZ77:
         fn = lz77_free;
+        break;
+    case ALGO_LZ78:
+        fn = lz78_free;
         break;
     }
     fn(compressed);
@@ -147,7 +163,10 @@ int main(int argc, const char *argv[]) {
             const char *algo_str = argv[++i];
             if (strcmp(algo_str, "LZ77") == 0) {
                 algo = ALGO_LZ77;
+            } else if (strcmp(algo_str, "LZ78") == 0) {
+                algo = ALGO_LZ78;
             }
+            arg_cursor += 2;
         } else if (strcmp(arg, "-d") == 0 || strcmp(arg, "--decompress") == 0) {
             mode = MODE_DECOMPRESS;
             arg_cursor += 1;
@@ -174,7 +193,7 @@ int main(int argc, const char *argv[]) {
             "  %-17s %s\n"
             "  %-17s %s\n",
             program_name,
-            "-a, --algo", "The compression algorithm to use (default: LZ77)",
+            "-a, --algo", "The compression algorithm to use (available: LZ77, LZ78) (default: LZ77)",
             "-d, --decompress", "Decompress input instead of compressing",
             "--debug-cr", "Print the compressed representation to stderr",
             "-h, --help", "Display this help message"
@@ -218,16 +237,16 @@ int main(int argc, const char *argv[]) {
 
     switch (mode) {
     case MODE_COMPRESS: {
-        compressed = lz_compress(ALGO_LZ77, input);
+        compressed = lz_compress(algo, input);
         if (!compressed) {
             fprintf(stderr, "error: lz_compress failed\n");
             retcode = 1;
             goto cleanup;
         }
         if (debug & DEBUG_COMPRESSED_REPR) {
-            lz_print(ALGO_LZ77, compressed, stderr);
+            lz_print(algo, compressed, stderr);
         }
-        if (lz_serialize(ALGO_LZ77, compressed, output_file) < 0) {
+        if (lz_serialize(algo, compressed, output_file) < 0) {
             fprintf(stderr, "error: lz_serialize failed\n");
             retcode = 1;
             goto cleanup;
@@ -235,16 +254,16 @@ int main(int argc, const char *argv[]) {
         break;
     }
     case MODE_DECOMPRESS: {
-        compressed = lz_deserialize(ALGO_LZ77, input_file);
+        compressed = lz_deserialize(algo, input_file);
         if (!compressed) {
             fprintf(stderr, "error: lz_deserialize failed\n");
             retcode = 1;
             goto cleanup;
         }
         if (debug & DEBUG_COMPRESSED_REPR) {
-            lz_print(ALGO_LZ77, compressed, stderr);
+            lz_print(algo, compressed, stderr);
         }
-        if (lz_decompress(ALGO_LZ77, compressed, output_file) < 0) {
+        if (lz_decompress(algo, compressed, output_file) < 0) {
             fprintf(stderr, "error: lz_decompress failed\n");
             retcode = 1;
             goto cleanup;
@@ -264,7 +283,7 @@ cleanup:
         fclose(output_file);
     }
     if (compressed) {
-        lz_free(ALGO_LZ77, compressed);
+        lz_free(algo, compressed);
     }
     return retcode;
 }

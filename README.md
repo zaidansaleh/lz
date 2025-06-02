@@ -4,6 +4,7 @@ Compress input file using Lempel-Ziv algorithms.
 
 These are the currently implemented algorithms (more to be added):
 - LZ77
+- LZ78
 
 ## Usage
 
@@ -39,6 +40,15 @@ To save the result to a file:
 
 ```sh
 ./lz -d output.lz input2.txt
+```
+
+### Change the algorithm
+
+To change the algorithm for compression/decompression:
+
+```sh
+./lz -a LZ78 input.txt output.lz
+./lz -d -a LZ78 output.lz input2.txt
 ```
 
 ## License
