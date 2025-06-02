@@ -10,18 +10,6 @@
 
 #include "string.h"
 
-typedef struct {
-    uint16_t offset;
-    uint8_t length;
-    uint8_t symbol;
-} LZ77_Tuple;
-
-typedef struct {
-    size_t capacity;
-    size_t length;
-    LZ77_Tuple data[];
-} LZ77_TupleList;
-
 int lz77_serialize(const void *compressed, FILE *stream);
 
 void *lz77_deserialize(FILE *stream);

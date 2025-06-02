@@ -10,6 +10,18 @@
 #include "lz.h"
 #include "string.h"
 
+typedef struct {
+    uint16_t offset;
+    uint8_t length;
+    uint8_t symbol;
+} LZ77_Tuple;
+
+typedef struct {
+    size_t capacity;
+    size_t length;
+    LZ77_Tuple data[];
+} LZ77_TupleList;
+
 LZ77_TupleList *lz77_tuple_list_new(size_t capacity) {
     LZ77_TupleList *list = malloc(sizeof(LZ77_TupleList) + sizeof(LZ77_Tuple) * capacity);
     if (!list) {
