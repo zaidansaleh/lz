@@ -10,11 +10,13 @@
 
 #include "lz77.h"
 #include "lz78.h"
+#include "lzw.h"
 #include "string.h"
 
 typedef enum {
     ALGO_LZ77,
     ALGO_LZ78,
+    ALGO_LZW,
 } Algo;
 
 void uint8_be_write(uint8_t *buf, uint8_t value);

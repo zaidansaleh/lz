@@ -5,6 +5,7 @@ Compress input file using Lempel-Ziv algorithms.
 These are the currently implemented algorithms (more to be added):
 - LZ77
 - LZ78
+- LZW
 
 ## Usage
 

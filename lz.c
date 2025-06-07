@@ -9,7 +9,6 @@
 #include <string.h>
 
 #include "lz.h"
-#include "lz78.h"
 #include "string.h"
 
 #define DEBUG_COMPRESSED_REPR (1 << 0)
@@ -62,6 +61,9 @@ int lz_serialize(Algo algo, const void *compressed, FILE *stream) {
     case ALGO_LZ78:
         fn = lz78_serialize;
         break;
+    case ALGO_LZW:
+        fn = lzw_serialize;
+        break;
     }
     return fn(compressed, stream);
 }
@@ -72,6 +74,8 @@ void *lz_deserialize(Algo algo, FILE *stream) {
         return lz77_deserialize(stream);
     case ALGO_LZ78:
         return lz78_deserialize(stream);
+    case ALGO_LZW:
+        return lzw_deserialize(stream);
     }
     return NULL;
 }
@@ -82,6 +86,8 @@ void *lz_compress(Algo algo, const String *input) {
         return lz77_compress(input);
     case ALGO_LZ78:
         return lz78_compress(input);
+    case ALGO_LZW:
+        return lzw_compress(input);
     }
     return NULL;
 }
@@ -94,6 +100,9 @@ int lz_decompress(Algo algo, const void *compressed, FILE *stream) {
         break;
     case ALGO_LZ78:
         fn = lz78_decompress;
+        break;
+    case ALGO_LZW:
+        fn = lzw_decompress;
         break;
     }
 
@@ -121,6 +130,9 @@ void lz_print(Algo algo, const void *compressed, FILE *stream) {
     case ALGO_LZ78:
         fn = lz78_print;
         break;
+    case ALGO_LZW:
+        fn = lzw_print;
+        break;
     }
     fn(compressed, stream);
 }
@@ -133,6 +145,9 @@ void lz_free(Algo algo, void *compressed) {
         break;
     case ALGO_LZ78:
         fn = lz78_free;
+        break;
+    case ALGO_LZW:
+        fn = lzw_free;
         break;
     }
     fn(compressed);
@@ -165,6 +180,8 @@ int main(int argc, const char *argv[]) {
                 algo = ALGO_LZ77;
             } else if (strcmp(algo_str, "LZ78") == 0) {
                 algo = ALGO_LZ78;
+            } else if (strcmp(algo_str, "LZW") == 0) {
+                algo = ALGO_LZW;
             }
             arg_cursor += 2;
         } else if (strcmp(arg, "-d") == 0 || strcmp(arg, "--decompress") == 0) {
@@ -193,7 +210,7 @@ int main(int argc, const char *argv[]) {
             "  %-17s %s\n"
             "  %-17s %s\n",
             program_name,
-            "-a, --algo", "The compression algorithm to use (available: LZ77, LZ78) (default: LZ77)",
+            "-a, --algo", "The compression algorithm to use (available: LZ77, LZ78, LZW) (default: LZ77)",
             "-d, --decompress", "Decompress input instead of compressing",
             "--debug-cr", "Print the compressed representation to stderr",
             "-h, --help", "Display this help message"
