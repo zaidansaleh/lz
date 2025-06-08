@@ -192,17 +192,33 @@ int lzw_prefix_table_insert(LZW_PrefixTable *table, uint16_t code, String *prefi
     return 0;
 }
 
+void codes_to_bytes(uint8_t *buf, uint16_t code1, uint16_t code2) {
+    buf[0] = code1 >> 4 & 0xFF;
+    buf[1] = ((code1 & 0xF) << 4) | ((code2 >> 8) & 0xF);
+    buf[2] = code2 & 0xFF;
+}
+
 int lzw_serialize(const void *compressed, FILE *stream) {
     const LZW_CodeList *list = compressed;
-    for (size_t i = 0; i < list->length; ++i) {
-        uint8_t buf[2];
-        uint16_be_write(buf, list->data[i]);
+    for (size_t i = 0; i < list->length; i += 2) {
+        // WARNING: When the number of codes is odd, the final code pair includes a placeholder value of 0 for code2.
+        // If 0 is a valid LZW code, this may lead to ambiguity during deserialization.
+        // This format is therefore unsafe for binary data where 0 is a legal code.
+        uint16_t code1 = list->data[i];
+        uint16_t code2 = i + 1 >= list->length ? 0 : list->data[i + 1];
+        uint8_t buf[3];
+        codes_to_bytes(buf, code1, code2);
         size_t written = fwrite(buf, 1, sizeof(buf), stream);
         if (written != sizeof(buf)) {
             return -1;
         }
     }
     return 0;
+}
+
+void bytes_to_codes(uint8_t *buf, uint16_t *code1, uint16_t *code2) {
+    *code1 = (buf[0] << 4) | ((buf[1] >> 4) & 0xF);
+    *code2 = ((buf[1] & 0xF) << 8) | buf[2];
 }
 
 void *lzw_deserialize(FILE *stream) {
@@ -220,7 +236,7 @@ void *lzw_deserialize(FILE *stream) {
     }
 
     while (true) {
-        uint8_t buf[2];
+        uint8_t buf[3];
         size_t read = fread(buf, 1, sizeof(buf), stream);
         if (read != sizeof(buf)) {
             if (feof(stream)) {
@@ -229,8 +245,13 @@ void *lzw_deserialize(FILE *stream) {
             error = true;
             goto cleanup;
         }
-        uint16_t code = uint16_be_read(buf);
-        if (lzw_code_list_push(list, code) < 0) {
+        uint16_t code1, code2;
+        bytes_to_codes(buf, &code1, &code2);
+        if (lzw_code_list_push(list, code1) < 0) {
+            error = true;
+            goto cleanup;
+        }
+        if (code2 != 0 && lzw_code_list_push(list, code2) < 0) {
             error = true;
             goto cleanup;
         }
@@ -256,7 +277,7 @@ void *lzw_compress(const String *input) {
         goto cleanup;
     }
 
-    dict = lzw_hash_table_new(UINT8_MAX + 1);
+    dict = lzw_hash_table_new(4096);
     if (!dict) {
         error = true;
         goto cleanup;
