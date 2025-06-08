@@ -86,12 +86,11 @@ void lzw_hash_table_free(LZW_HashTable *table) {
 }
 
 size_t lzw_hash_table_hash_prefix(const LZW_HashTable *table, const String *prefix) {
-    // TODO: Use a better hash function.
-    size_t n = 0;
+    size_t hash = 5381;
     for (size_t i = 0; i < prefix->length; ++i) {
-        n = n << 1 | prefix->data[i];
+        hash = ((hash << 5) + hash) + prefix->data[i];
     }
-    return n % table->capacity;
+    return hash % table->capacity;
 }
 
 LZW_Entry *lzw_hash_table_get(const LZW_HashTable *table, const String *prefix) {
